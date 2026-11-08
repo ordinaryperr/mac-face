@@ -1,5 +1,4 @@
 import AppKit
-import AuthenticationServices
 import SwiftUI
 
 @MainActor
@@ -55,9 +54,7 @@ struct MacFaceApp: App {
 
 struct FaceGateView: View {
     @StateObject private var gate = FaceGate()
-    @StateObject private var session = AppleSession()
     private let screenLock = Notification.Name("com.apple.screenIsLocked")
-    private var isUnlocked: Bool { session.phase == .signedIn && gate.isUnlocked }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -65,7 +62,7 @@ struct FaceGateView: View {
                 Label("Mac Face", systemImage: "faceid")
                     .font(.headline)
                 Spacer()
-                Label(isUnlocked ? "열림" : "잠김", systemImage: isUnlocked ? "lock.open.fill" : "lock.fill")
+                Label(gate.isUnlocked ? "열림" : "잠김", systemImage: gate.isUnlocked ? "lock.open.fill" : "lock.fill")
                     .font(.caption.weight(.semibold))
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.quaternary, in: Capsule())
@@ -75,43 +72,23 @@ struct FaceGateView: View {
             Divider()
 
             VStack(spacing: 14) {
-                Image(systemName: isUnlocked ? "checkmark.shield" : session.phase == .signedIn ? "faceid" : "person.crop.circle")
+                Image(systemName: gate.isUnlocked ? "checkmark.shield" : "faceid")
                     .font(.system(size: 38, weight: .light))
-                    .foregroundStyle(isUnlocked ? Color.green : Color.accentColor)
+                    .foregroundStyle(gate.isUnlocked ? Color.green : Color.accentColor)
                     .frame(width: 76, height: 76)
                     .background(.quaternary.opacity(0.55), in: RoundedRectangle(cornerRadius: 22))
                     .accessibilityHidden(true)
 
-                switch session.phase {
-                case .checking:
-                    heading("Apple 로그인 확인 중")
-                    ProgressView().controlSize(.small)
-                case .signedOut:
-                    heading("Mac Face에 로그인")
-                    Text("Apple로 로그인한 뒤 얼굴로 보호 화면을 열 수 있습니다.")
-                        .foregroundStyle(.secondary)
-                    SignInWithAppleButton(.signIn) { request in
-                        session.prepare(request)
-                    } onCompletion: { result in
-                        Task { @MainActor in session.complete(result) }
-                    }
-                    .frame(width: 220, height: 42)
-                    .disabled(!session.isConfigured || session.isSigningIn)
-                    if !session.isConfigured {
-                        Text("이 빌드에서 Apple 로그인을 사용하려면 개발자 서명 설정이 필요합니다.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    } else if session.isSigningIn {
-                        ProgressView().controlSize(.small)
-                    }
-                case .signedIn where isUnlocked:
-                    heading("보호 화면이 열렸습니다")
+                Text(gate.isUnlocked ? "보호 화면이 열렸습니다" : "얼굴로 잠금 해제")
+                    .font(.system(size: 25, weight: .semibold))
+                    .accessibilityAddTraits(.isHeader)
+
+                if gate.isUnlocked {
                     Text("얼굴 인증이 성공한 뒤에만 보이는 앱 내부 화면입니다.")
                         .foregroundStyle(.secondary)
                     Button("다시 잠그기") { gate.lock() }
                         .buttonStyle(.borderedProminent)
-                case .signedIn:
-                    heading("얼굴로 잠금 해제")
+                } else {
                     Text(gate.isScanning ? "카메라를 정면으로 바라보세요." : "Mugshot에 등록한 얼굴로 이 화면을 열 수 있습니다.")
                         .foregroundStyle(.secondary)
                     Button(action: { gate.scan() }) {
@@ -126,12 +103,7 @@ struct FaceGateView: View {
                     .disabled(gate.isScanning)
                 }
 
-                if let message = session.message {
-                    Text(message)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
-                if session.phase == .signedIn, let message = gate.message {
+                if let message = gate.message {
                     Text(message)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -151,36 +123,16 @@ struct FaceGateView: View {
             .padding(22)
 
             Divider()
-            HStack {
-                Label("얼굴 확인은 이 Mac에서 처리합니다", systemImage: "laptopcomputer")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if session.phase == .signedIn {
-                    Button("로그아웃") {
-                        gate.lock()
-                        session.signOut()
-                    }
-                    .buttonStyle(.link)
-                }
-            }
-            .padding(.horizontal, 24).padding(.vertical, 13)
+            Label("얼굴 확인은 이 Mac에서 처리합니다", systemImage: "laptopcomputer")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 24).padding(.vertical, 13)
         }
         .frame(width: 468)
-        .task { await session.restore() }
-        .onReceive(NotificationCenter.default.publisher(for: ASAuthorizationAppleIDProvider.credentialRevokedNotification).receive(on: RunLoop.main)) { _ in
-            gate.lock()
-            Task { await session.recheck() }
-        }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in gate.lock() }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.sessionDidResignActiveNotification)) { _ in gate.lock() }
         .onReceive(DistributedNotificationCenter.default().publisher(for: screenLock)) { _ in gate.lock() }
         .onDisappear { gate.lock() }
     }
 
-    private func heading(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 25, weight: .semibold))
-            .accessibilityAddTraits(.isHeader)
-    }
 }
