@@ -1,0 +1,6 @@
+/build/
+/Mugshot-*.dmg
+.DS_Store
+*.provisionprofile
+*.mobileprovision
+*.p12
